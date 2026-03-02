@@ -19,5 +19,6 @@ class Config:
     
     # App Configuration
     SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key")
-    DEBUG = False
-    PORT = 5001
+    DEBUG = os.getenv("DEBUG", "False").lower() in ("true", "1", "t")
+    PORT = int(os.getenv("PORT", 10000))
+

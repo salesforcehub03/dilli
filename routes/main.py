@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, request, jsonify, make_response
+from flask import Blueprint, render_template, request, jsonify, make_response, session
 from services.neo4j_service import driver, get_context_for_drug
 from services.llm_service import llm_manager
 from services.session_service import session_manager
