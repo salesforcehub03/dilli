@@ -11,7 +11,8 @@ class Config:
     NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "")
     
     # LLM Configuration
-    # Key must be provided via UI
+    # Key must be provided via UI or .env fallback
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
     AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
     AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
     AZURE_OPENAI_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-35-turbo")

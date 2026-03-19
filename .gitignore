@@ -2,13 +2,18 @@
 __pycache__/
 *.pyc
 *.pyo
+venv/
+env/
+*.swp
 
 # Environment
 .env
+.venv
 
 # Binaries & archives
 *.exe
 *.zip
+*.pyz
 
 # Logs
 *.log
@@ -23,3 +28,4 @@ preclinical_output.txt
 # IDE
 .vscode/
 .idea/
+.DS_Store

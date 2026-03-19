@@ -1,11 +1,18 @@
 import requests
 import json
+import time
+import random
 from config import Config
 
 class LLMService:
     def __init__(self):
         self.gemini_key = None # Must be set via UI
-        self.gemini_models = ["gemini-1.5-flash", "gemini-2.0-flash"]
+        self.gemini_models = [
+            "gemini-2.0-flash",
+            "gemini-flash-latest",
+            "gemini-2.5-flash",
+            "gemini-2.5-pro"
+        ]
         self.azure_config = {
             "endpoint": Config.AZURE_OPENAI_ENDPOINT,
             "key": Config.AZURE_OPENAI_API_KEY,
@@ -32,25 +39,42 @@ class LLMService:
         
         payload = {
             "messages": [
-                {"role": "system", "content": "You are a helpful assistant for drug safety analysis."},
+                {"role": "system", "content": "You are a clinical pharmacology assistant. Output strictly valid JSON without markdown code blocks unless requested otherwise."},
                 {"role": "user", "content": prompt}
             ],
-            "temperature": 0.7,
-            "max_tokens": 800
+            "temperature": 0.2,
+            "max_tokens": 4000
         }
         
-        try:
-            response = requests.post(url, json=payload, headers=headers, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                try:
-                    return {"reply": data["choices"][0]["message"]["content"], "status": 200}
-                except (KeyError, IndexError):
-                    return {"reply": "Error parsing Azure response.", "status": 500}
-            else:
-                return {"reply": f"Azure OpenAI Error ({response.status_code}): {response.text}", "status": response.status_code}
-        except Exception as e:
-            return {"reply": f"Azure Connection Error: {e}", "status": 500}
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(url, json=payload, headers=headers, timeout=25)
+                if response.status_code == 200:
+                    data = response.json()
+                    try:
+                        text = data["choices"][0]["message"]["content"].strip()
+                        # Clean markdown code blocks if present
+                        if text.startswith("```json"): text = text[7:]
+                        elif text.startswith("```"): text = text[3:]
+                        if text.endswith("```"): text = text[:-3]
+                        return {"reply": text.strip(), "status": 200}
+                    except (KeyError, IndexError):
+                        return {"reply": "Error parsing Azure response content.", "status": 500}
+                elif response.status_code == 429:
+                    # Exponential backoff with jitter
+                    wait_time = (2 ** attempt) + random.random()
+                    print(f"[RETRY] Azure Rate Limit (429). Attempt {attempt+1}/{max_retries}. Waiting {wait_time:.2f}s...", flush=True)
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    return {"reply": f"Azure OpenAI Error ({response.status_code}): {response.text}", "status": response.status_code}
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    return {"reply": f"Azure Connection Error after {max_retries} attempts: {e}", "status": 500}
+                time.sleep(1)
+        
+        return {"reply": "Azure Rate Limit reached after retries.", "status": 429}
 
     def query_gemini(self, prompt):
         if not self.gemini_key:

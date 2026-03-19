@@ -2,7 +2,10 @@ from flask import Blueprint, render_template, request, jsonify, make_response, s
 from services.neo4j_service import driver, get_context_for_drug
 from services.llm_service import llm_manager
 from services.session_service import session_manager
+from services.chatbot_agent import get_chatbot_response
+from services.tox_predictor import predict_drug_toxicity
 from io import BytesIO
+import os
 import json
 import requests
 
@@ -17,11 +20,39 @@ def home():
     session_manager.clear_session() # Start fresh
     return render_template("index.html")
 
-@main_bp.route("/graph", methods=["POST"])
+@main_bp.route("/graph", methods=["GET", "POST"])
 def graph():
-    drug_input = request.form.get("drug")
+    if request.method == "POST":
+        drug_input = request.form.get("drug")
+    else:
+        drug_input = request.args.get("drug")
+    
+    if not drug_input:
+        return render_template("index.html")
+        
     session_manager.add_visit(drug_input)
     return render_template("graph.html", drug=drug_input)
+
+@main_bp.route("/search_drugs")
+def search_drugs():
+    query_str = request.args.get("q", "").lower()
+    if not driver:
+        return jsonify([])
+    
+    query = """
+    MATCH (d:Drug)
+    WHERE toLower(d.drug_name) CONTAINS $q OR d.smiles CONTAINS $q
+    RETURN d.drug_name AS name
+    LIMIT 10
+    """
+    try:
+        with driver.session() as session:
+            result = session.run(query, q=query_str)
+            drugs = [record["name"] for record in result if record["name"]]
+            return jsonify(list(set(drugs)))
+    except Exception as e:
+        print(f"Error searching drugs: {e}")
+        return jsonify([])
 
 @main_bp.route("/get_graph_data")
 def get_graph_data():
@@ -39,15 +70,14 @@ def get_graph_data():
             ]
         })
 
-    # Optimized Query
+    # Graph query: Fetch immediate neighborhood up to 3 hops without artificial isolation 
+    # so the user can accurately see how it connects to the class/other drugs.
     query = """
     MATCH (d:Drug)
-    WHERE toLower(d.drug_name) = toLower($drug) OR d.smiles = $drug
-    MATCH (d)-[r*1..3]-(n)
-    RETURN d, r, n
-    LIMIT 100
+    WHERE (toLower(d.drug_name) = toLower($drug) OR d.smiles = $drug)
+    OPTIONAL MATCH p = (d)-[*1..3]-(n)
+    RETURN d, relationships(p) AS r, n
     """
-
     try:
         with driver.session() as session:
             result = session.run(query, drug=drug_input)
@@ -62,14 +92,21 @@ def get_graph_data():
                     processed_nodes.add(d.element_id)
                 
                 n = record['n']
-                if n.element_id not in processed_nodes:
+                if n is not None and n.element_id not in processed_nodes:
                     nodes.append({"id": n.element_id, "label": list(n.labels)[0], "properties": dict(n)})
                     processed_nodes.add(n.element_id)
 
                 path_rels = record['r']
+                if path_rels is None:
+                    continue
                 if isinstance(path_rels, list):
                     for rel in path_rels:
-                         edges.append({
+                        # Add intermediate start/end nodes so multi-hop paths are fully represented
+                        for intermediate in [rel.start_node, rel.end_node]:
+                            if intermediate.element_id not in processed_nodes:
+                                nodes.append({"id": intermediate.element_id, "label": list(intermediate.labels)[0], "properties": dict(intermediate)})
+                                processed_nodes.add(intermediate.element_id)
+                        edges.append({
                             "id": rel.element_id,
                             "from": rel.start_node.element_id,
                             "to": rel.end_node.element_id,
@@ -77,7 +114,11 @@ def get_graph_data():
                             "properties": dict(rel)
                         })
                 else:
-                     edges.append({
+                    for intermediate in [path_rels.start_node, path_rels.end_node]:
+                        if intermediate.element_id not in processed_nodes:
+                            nodes.append({"id": intermediate.element_id, "label": list(intermediate.labels)[0], "properties": dict(intermediate)})
+                            processed_nodes.add(intermediate.element_id)
+                    edges.append({
                         "id": path_rels.element_id,
                         "from": path_rels.start_node.element_id,
                         "to": path_rels.end_node.element_id,
@@ -163,19 +204,27 @@ def get_similar_molecules():
 
 @main_bp.route("/get_compare_data")
 def get_compare_data():
-    """Fetch subnode data for two drugs for side-by-side comparison."""
-    drug1 = request.args.get("drug1")
-    drug2 = request.args.get("drug2")
+    """Fetch subnode data for multiple drugs for comparison with path isolation."""
+    drugs_input = request.args.get("drugs", "")
+    if not drugs_input:
+        d1 = request.args.get("drug1")
+        d2 = request.args.get("drug2")
+        drugs_list = [d1, d2] if (d1 and d2) else []
+    else:
+        drugs_list = [d.strip() for d in drugs_input.split(",") if d.strip()]
 
-    if not driver or not drug1 or not drug2:
-        return jsonify({"error": "Missing parameters or no database connection"}), 400
+    if not drugs_list:
+        return jsonify({"error": "Missing 'drugs' parameter"}), 400
+    if not driver:
+        return jsonify({"error": "No database connection"}), 500
 
+    # ISOLATED QUERY: Ensure path stays exactly within the connected context of the specific drug.
+    # No class-level bleeding allowed as per user constraint.
     query = """
-    MATCH (d:Drug)
-    WHERE toLower(d.drug_name) = toLower($drug) OR d.smiles = $drug
-    MATCH (d)-[r*1..2]-(n)
-    RETURN d, r, n
-    LIMIT 100
+    MATCH p = (d:Drug)-[*1..6]-(n)
+    WHERE (toLower(d.drug_name) CONTAINS toLower($drug) OR d.smiles = $drug)
+      AND ALL(node IN nodes(p) WHERE NOT ('Drug' IN labels(node)) OR node = d)
+    RETURN d, relationships(p) AS rels, n
     """
 
     def fetch_drug_data(drug_name):
@@ -183,25 +232,26 @@ def get_compare_data():
         edges = []
         drug_props = {}
         processed_nodes = set()
+        processed_edges = set()
 
         try:
             with driver.session() as session:
                 result = session.run(query, drug=drug_name)
                 for record in result:
                     d = record['d']
-                    if d.element_id not in processed_nodes:
+                    if d and d.element_id not in processed_nodes:
                         drug_props = dict(d)
                         nodes.append({"id": d.element_id, "label": list(d.labels)[0], "properties": dict(d)})
                         processed_nodes.add(d.element_id)
 
                     n = record['n']
-                    if n.element_id not in processed_nodes:
+                    if n and n.element_id not in processed_nodes:
                         nodes.append({"id": n.element_id, "label": list(n.labels)[0], "properties": dict(n)})
                         processed_nodes.add(n.element_id)
 
-                    path_rels = record['r']
-                    if isinstance(path_rels, list):
-                        for rel in path_rels:
+                    rels = record['rels']
+                    for rel in rels:
+                        if rel.element_id not in processed_edges:
                             edges.append({
                                 "id": rel.element_id,
                                 "from": rel.start_node.element_id,
@@ -209,41 +259,147 @@ def get_compare_data():
                                 "label": rel.type,
                                 "properties": dict(rel)
                             })
-                    else:
-                        edges.append({
-                            "id": path_rels.element_id,
-                            "from": path_rels.start_node.element_id,
-                            "to": path_rels.end_node.element_id,
-                            "label": path_rels.type,
-                            "properties": dict(path_rels)
-                        })
+                            processed_edges.add(rel.element_id)
+                            # Ensure intermediate nodes are in nodes list
+                            for inter_node in [rel.start_node, rel.end_node]:
+                                if inter_node.element_id not in processed_nodes:
+                                    nodes.append({"id": inter_node.element_id, "label": list(inter_node.labels)[0], "properties": dict(inter_node)})
+                                    processed_nodes.add(inter_node.element_id)
         except Exception as e:
             print(f"Error fetching compare data for {drug_name}: {e}", flush=True)
 
-        # Group subnodes by label type (exclude the Drug node itself)
-        subnodes = {}
+        # Map nodes to categories
+        category_map = {
+            'ClinicalData': ['ClinicalData', 'StudyOverview', 'StudyMetadata', 'PopulationCharacteristics', 'SafetyEfficacy', 'SafetyData', 'EfficacyOutcomes', 'EligibilityCriteria', 'TreatmentManagement', 'SubgroupEfficacy', 'RecommendedDose'],
+            'PreclinicalData': ['PreClinicalData', 'PreClinical', 'PreclinicalToxicology', 'PreclinicalData', 'PreclinicalStudy', 'Species'],
+            'Transcriptomics': ['TranscriptomicData', 'Signature', 'DifferentialExpression'],
+            'ExperimentalDesign': ['ExperimentalDesign', 'ExperimentalGroup', 'DosingAdministration', 'ClinicalChemistryCycle', 'Dose'],
+            'Genotoxicity': ['Genotoxicity', 'Carcinogenicity', 'ReproductiveToxicity'],
+            'Exposure': ['ExposureMeasurement', 'ToxicokineticMeasurement', 'ToxicokineticParameters', 'Exposure', 'PKData', 'Pharmacokinetics', 'PharmacokineticParameters'],
+            'MicroscopicFindings': ['MicroscopicFindings', 'MicroscopicFinding'],
+            'AdverseEvents': ['AdverseEvents', 'AdverseEvent', 'Toxicity', 'ToxicityMeasurement']
+        }
+        
+        subnodes = {cat: [] for cat in category_map.keys()}
+        subnodes['Other'] = []
+
         for node in nodes:
             lbl = node['label']
-            if lbl == 'Drug':
-                continue
-            if lbl not in subnodes:
-                subnodes[lbl] = []
-            subnodes[lbl].append(node['properties'])
+            if lbl == 'Drug': continue
+            
+            # Clean adverse events to remove unneeded metadata and specific count values
+            if lbl == 'AdverseEvent':
+                clean_props = {}
+                for k, v in node['properties'].items():
+                    key_lower = k.lower()
+                    if 'count' not in key_lower and key_lower not in ['id', 'uuid', '_id', 'source_id', 'version']:
+                        clean_props[k] = v
+                node['properties'] = clean_props
+            
+            found = False
+            for cat, labels in category_map.items():
+                if lbl in labels:
+                    subnodes[cat].append(node['properties'])
+                    found = True
+                    break
+            if not found:
+                subnodes['Other'].append(node['properties'])
 
-        unique_edges = list({e['id']: e for e in edges}.values())
+        # Remove empty categories
+        subnodes = {k: v for k, v in subnodes.items() if v}
+
+        # --- OMNIPRESENT AI LAYER (Backfilling DB Gaps + Adding Toxicity Analytics) ---
+        from services.llm_service import llm_manager
+        from config import Config
+        import json
+        
+        target_cats_toxicity = [
+            'Hepatotoxicity Risk',
+            'Metabolism & CYP Profile',
+            'Preclinical Organ Toxicity',
+            'Clinical Safety Alerts',
+            'Physicochemical Risk Factors'
+        ]
+        
+        missing_db_categories = [cat for cat in category_map.keys() if cat not in subnodes]
+        all_target_cats = missing_db_categories + target_cats_toxicity
+        
+        if not llm_manager.gemini_key and getattr(Config, 'GEMINI_API_KEY', None):
+            llm_manager.update_gemini_key(Config.GEMINI_API_KEY)
+            
+        prompt = (f"Generate a strictly formatted, professional level clinical and pharmacological analysis for the drug {drug_name}. "
+                  f"Output EXACTLY a JSON dictionary featuring these '{len(all_target_cats)}' Categories as keys: {', '.join(all_target_cats)}. "
+                  f"For EACH category, provide a list containing AT LEAST 5 to 6 distinct, highly insightful dictionaries. Each dictionary should represent a single specific medical/toxicity observation (e.g., {{'Mechanism': '...', 'Observation': '...', 'Clinical_Significance': '...'}}). "
+                  f"The data must be high-density and suitable for professional medical comparison. "
+                  f"Do NOT include markdown formatting or blocks, your output will be parsed natively via json.loads().")
+                  
+        # TIER 1: AZURE GPT-4o (Primary for high-speed synthesis)
+        res = llm_manager.query_azure(prompt)
+        source_tag = '(Azure GPT-4o Synthesis)'
+        
+        # TIER 2: GEMINI (Fallback if Azure fails)
+        if not res or res.get('status') != 200:
+            print(f"[FALLBACK] Azure failed for {drug_name} (Status: {res.get('status') if res else 'No Res'}). Trying Gemini...", flush=True)
+            res = llm_manager.query_gemini(prompt)
+            source_tag = '(Gemini LLM Synthesis)'
+
+        if res and res.get('status') == 200:
+            try:
+                reply_text = res['reply'].strip()
+                # Secondary cleanup check
+                if reply_text.startswith("```json"): reply_text = reply_text[7:]
+                elif reply_text.startswith("```"): reply_text = reply_text[3:]
+                if reply_text.endswith("```"): reply_text = reply_text[:-3]
+                
+                ai_data = json.loads(reply_text.strip())
+                for cat in all_target_cats:
+                    if cat in ai_data and isinstance(ai_data[cat], list):
+                        subnodes[cat] = ai_data[cat]
+            except Exception as e:
+                print(f"LLM omnipresent fallback parse error for {drug_name}: {e}", flush=True)
+        # Remove empty categories so UI stays clean if AI misses any
+        subnodes = {k: v for k, v in subnodes.items() if v}
 
         return {
             "name": drug_name,
             "drug_props": drug_props,
             "subnodes": subnodes,
             "nodes": nodes,
-            "edges": unique_edges
+            "edges": edges
         }
 
-    result1 = fetch_drug_data(drug1)
-    result2 = fetch_drug_data(drug2)
+    from concurrent.futures import ThreadPoolExecutor
 
-    return jsonify({"drug1": result1, "drug2": result2})
+    results = {}
+    with ThreadPoolExecutor(max_workers=min(len(drugs_list), 6)) as executor:
+        # Create a mapping of future to drug name
+        futures = []
+        for drug in drugs_list:
+            futures.append(executor.submit(fetch_drug_data, drug))
+            # Staggered start to avoid simultaneous API bursts
+            import time
+            time.sleep(0.5)
+        
+        # Results map
+        results = {}
+        # Wait for all futures in order or as they finish? 
+        # Using index mapping to keep results associated with drugs
+        for idx, future in enumerate(futures):
+            drug = drugs_list[idx]
+            try:
+                results[drug] = future.result()
+            except Exception as e:
+                print(f"Parallel fetch failed for {drug}: {e}", flush=True)
+                # Ensure we have a placeholder to avoid JS crashes
+                results[drug] = {
+                    "name": drug,
+                    "drug_props": {},
+                    "subnodes": {"Error": [{"Message": f"Fetch failed: {e}"}]},
+                    "nodes": [],
+                    "edges": []
+                }
+
+    return jsonify({"compare_results": results, "drugs_list": drugs_list})
 
 def _fetch_pubchem_properties(drug_name):
     """Fetch molecular properties from PubChem by drug name."""
@@ -298,37 +454,36 @@ def chat():
     user_message = data.get("message")
     drug_input = data.get("drug")
     
-    # 1. Get Context
-    context_text = get_context_for_drug(drug_input)
-
-    # 2. Try Azure
-    reply_data = llm_manager.query_azure(f"Context: {context_text}\nQuestion: {user_message}")
-    
-    # 3. Try Gemini
-    if not reply_data:
-        # Check if key is set
-        if not llm_manager.gemini_key:
-             return jsonify({"reply": "API Key not configured.", "error_code": "KEY_MISSING", "status": 401}), 401
-
-        prompt = f"""
-        You are a helpful assistant for a Drug-Induced Liver Injury (DILI) analysis platform.
-        User Question: "{user_message}"
-        Context from Knowledge Graph for drug '{drug_input}':
-        {context_text}
-        
-        Answer based on the context. If unknown, say so.
-        """
-        reply_data = llm_manager.query_gemini(prompt)
-
-    # 4. Fallback
-    if not reply_data:
-        reply_data = {"reply": "No AI backend configured.", "status": 200}
+    # Delegate to the LangChain Agent
+    reply_data = get_chatbot_response(user_message, drug_input)
 
     # Store in history
     if reply_data.get("status") == 200:
         session_manager.add_chat(drug_input, user_message, reply_data.get("reply"))
     
     return jsonify(reply_data), reply_data.get("status", 200)
+
+@main_bp.route("/predict-toxicity", methods=["POST"])
+def predict_toxicity():
+    """Drug toxicity prediction endpoint — combines rule-based, molecular, and LLM approaches."""
+    data = request.get_json()
+    drug_name = data.get("drug")
+    if not drug_name:
+        return jsonify({"error": "Drug name is required"}), 400
+    if not driver:
+        return jsonify({"error": "Graph database not connected"}), 500
+
+    api_key = llm_manager.gemini_key or os.getenv("GEMINI_API_KEY")
+    try:
+        # Fetch PubChem data for enrichment
+        mol_props = _fetch_pubchem_properties(drug_name)
+        result = predict_drug_toxicity(drug_name, driver, api_key, mol_props=mol_props)
+        return jsonify(result)
+    except Exception as e:
+        print(f"[ToxPredict] Error: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 
 @main_bp.route("/set_key", methods=["POST"])
 def set_key():

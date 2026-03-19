@@ -7,6 +7,8 @@
     <title>Graph Visualization - {{ drug }}</title>
     <!-- Vis.js for Graph Visualization -->
     <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <!-- Chart.js for Safety Analytics -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -407,9 +409,11 @@
             display: none;
             align-items: center;
             justify-content: space-between;
-            z-index: 500;
+            z-index: 2000;
             font-size: 0.9rem;
             box-shadow: 0 -3px 15px rgba(0, 0, 0, 0.15);
+            border-radius: 12px 12px 0 0;
+            gap: 15px;
         }
 
         #compare-bar.active {
@@ -420,6 +424,19 @@
             display: flex;
             gap: 10px;
             align-items: center;
+            overflow-x: auto;
+            flex: 1;
+            padding-right: 10px;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(255,255,255,0.3) transparent;
+        }
+        
+        #compare-bar .bar-drugs::-webkit-scrollbar {
+            height: 4px;
+        }
+        #compare-bar .bar-drugs::-webkit-scrollbar-thumb {
+            background: rgba(255,255,255,0.3);
+            border-radius: 4px;
         }
 
         #compare-bar .bar-chip {
@@ -427,6 +444,18 @@
             padding: 4px 12px;
             border-radius: 12px;
             font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+
+        #compare-bar .bar-actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-shrink: 0;
         }
 
         #compare-bar button {
@@ -436,6 +465,7 @@
             cursor: pointer;
             font-weight: 600;
             font-size: 0.85rem;
+            white-space: nowrap;
         }
 
         .bar-compare-btn {
@@ -792,8 +822,33 @@
                     style="background:none; border:none; cursor:pointer; font-size:1.2rem;">&#9881;&#65039;</button>
             </div>
         </div>
-        <div style="font-size: 0.9rem; color: #666; margin-bottom: 10px;">
-            Focus: <strong style="color: #333;">{{ drug }}</strong>
+        <div
+            style="font-size: 0.9rem; color: #666; margin-bottom: 12px; display: flex; flex-direction: column; gap: 6px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <span>Focus Molecule:</span>
+                <span id="focus-status" style="font-weight: 700; color: #2c3e50;">{{ drug }}</span>
+            </div>
+            <div style="display: flex; gap: 6px;">
+                <input type="text" id="drug-search-input" list="drug-suggestions" placeholder="Change drug..." style="
+                    flex-grow: 1;
+                    padding: 6px 10px;
+                    border-radius: 6px;
+                    border: 1px solid #ddd;
+                    font-size: 0.85rem;
+                    outline: none;
+                " onkeyup="handleDrugSearch(this.value)" onchange="if(this.value) switchDrug(this.value)">
+                <datalist id="drug-suggestions"></datalist>
+                <button onclick="switchDrug(document.getElementById('drug-search-input').value)" style="
+                    padding: 6px 12px;
+                    background: #4facfe;
+                    color: white;
+                    border: none;
+                    border-radius: 6px;
+                    cursor: pointer;
+                    font-weight: 600;
+                    font-size: 0.8rem;
+                ">Go</button>
+            </div>
         </div>
 
         <div id="chat-container">
@@ -813,6 +868,28 @@
                 <button id="send-btn" onclick="sendMessage()">Send</button>
             </div>
         </div>
+
+        <!-- Toxicity Prediction Button -->
+        <button id="tox-predict-btn" onclick="openToxPanel()" style="
+            width: 100%;
+            padding: 11px;
+            margin-top: 12px;
+            background: linear-gradient(135deg, #e74c3c, #c0392b);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 700;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        " onmouseover="this.style.opacity='0.9'" onmouseout="this.style.opacity='1'">
+            🧪 Predict Toxicity Risk
+        </button>
+
 
         <!-- Left Resizer (Now inside the sidebar) -->
         <div class="resizer" id="resizer-left" style="z-index: 50;">
@@ -834,35 +911,47 @@
 
                 <!-- Core -->
                 <div class="legend-item"><span class="legend-shape"
-                        style="background:#4facfe; clip-path: polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%);"></span>
-                    Drug</div>
-
-                <!-- Drug Product Info (Replaces Adverse Event) -->
+                        style="background:#4facfe; clip-path: polygon(25% 0%, 75% 0%, 100% 50%, 75% 100%, 25% 100%, 0% 50%); width: 18px; height: 18px;"></span>
+                    Drug (Hexagon)</div>
                 <div class="legend-item"><span class="legend-shape"
-                        style="background:#C71585; width: 12px; height: 12px; border-radius: 50%;"></span> Drug Product
-                    Info
-                </div>
-
-                <!-- Study Overview -->
+                        style="background:#ff9a9e; clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%); width: 16px; height: 16px;"></span>
+                    Target (Diamond)</div>
                 <div class="legend-item"><span class="legend-shape"
-                        style="background:#000080; clip-path: polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%);"></span>
-                    Study
-                    Overview</div>
+                        style="background:#a18cd1; border-radius: 2px; width: 18px; height: 14px;"></span>
+                    Pathway</div>
+
+                <!-- Biology -->
+                <div class="legend-item"><span class="legend-shape"
+                        style="background:#84fab0; border-radius: 50%; width: 14px; height: 14px;"></span>
+                    Gene</div>
+                <div class="legend-item"><span class="legend-shape"
+                        style="background:#fdcbf1; border-radius: 50%; width: 14px; height: 14px;"></span>
+                    Enzyme</div>
+
+                <!-- Product Info & Studies -->
+                <div class="legend-item"><span class="legend-shape"
+                        style="background:#C71585; border-radius: 50%; width: 16px; height: 16px;"></span>
+                    Drug Product Info</div>
+                <div class="legend-item"><span class="legend-shape"
+                        style="background:#000080; border-radius: 2px; width: 16px; height: 16px;"></span>
+                    Study Overview (Square)</div>
 
                 <!-- Data Types -->
                 <div class="legend-item"><span class="legend-shape"
-                        style="background:#FF8C00; clip-path: polygon(50% 0%, 0% 100%, 100% 100%);"></span> Preclinical
-                </div>
+                        style="background:#FF8C00; clip-path: polygon(50% 0%, 0% 100%, 100% 100%); width: 16px; height: 16px;"></span>
+                    Preclinical (Triangle)</div>
                 <div class="legend-item"><span class="legend-shape"
-                        style="background:#00CED1; clip-path: polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%);"></span>
-                    Clinical
-                </div>
+                        style="background:#00CED1; clip-path: polygon(0% 0%, 100% 0%, 50% 100%); width: 16px; height: 16px;"></span>
+                    Clinical (Triangle Down)</div>
                 <div class="legend-item"><span class="legend-shape"
-                        style="background:#9370DB; border-radius: 50%;"></span>
-                    Signature</div>
+                        style="background:#9370DB; border-radius: 50%; width: 10px; height: 10px;"></span>
+                    Signature (Small Dot)</div>
                 <div class="legend-item"><span class="legend-shape"
-                        style="background:#7FFF00; clip-path: polygon(20% 0%, 80% 0%, 100% 100%, 0% 100%);"></span>
-                    Transcriptomic</div>
+                        style="background:#7FFF00; clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%); width: 12px; height: 12px;"></span>
+                    Transcriptomic (Small Diamond)</div>
+                <div class="legend-item"><span class="legend-shape"
+                        style="background:#fa709a; border-radius: 50%; width: 14px; height: 14px;"></span>
+                    Safety Data</div>
 
                 <!-- Similar Molecules -->
                 <div class="legend-item"><span class="legend-shape"
@@ -904,14 +993,11 @@
     <!-- Compare Floating Bar -->
     <div id="compare-bar">
         <div class="bar-drugs">
-            <span>🔬 Compare:</span>
-            <span class="bar-chip" id="bar-drug1">—</span>
-            <span>vs</span>
-            <span class="bar-chip" id="bar-drug2">—</span>
+            <!-- Dynamically populated by updateCompareBar() -->
         </div>
-        <div>
+        <div class="bar-actions">
             <button class="bar-compare-btn" id="bar-go-btn" onclick="showComparison()" disabled>Compare Now</button>
-            <button class="bar-clear-btn" onclick="clearCompare()">✕ Clear</button>
+            <button class="bar-clear-btn" onclick="clearCompare()">🗑️ Clear</button>
         </div>
     </div>
 
@@ -931,6 +1017,25 @@
         let network = null;
         let allNodes = []; // Store node data for lookup
 
+        // --- Drug Search & Switcher ---
+        function switchDrug(newDrug) {
+            if (!newDrug || newDrug.trim() === "" || newDrug === drugName) return;
+            // Redirect to new drug focus
+            window.location.href = '/graph?drug=' + encodeURIComponent(newDrug.trim());
+        }
+
+        async function handleDrugSearch(val) {
+            if (!val || val.length < 2) return;
+            try {
+                const resp = await fetch(`/search_drugs?q=${encodeURIComponent(val)}`);
+                const drugs = await resp.json();
+                const datalist = document.getElementById('drug-suggestions');
+                datalist.innerHTML = drugs.map(d => `<option value="${d}">`).join('');
+            } catch (err) {
+                console.error("Search error:", err);
+            }
+        }
+
         // --- Legend Toggle ---
         function toggleLegend() {
             const legend = document.getElementById('legend');
@@ -946,17 +1051,20 @@
                 color: { background: '#4facfe', border: '#00f2fe', highlight: { background: '#00f2fe', border: '#4facfe' } },
                 shape: 'hexagon',
                 label: 'Drug',
-                font: { color: '#ffffff', background: '#4facfe' }
+                font: { color: '#ffffff', background: '#4facfe' },
+                size: 30
             },
             Target: {
                 color: { background: '#ff9a9e', border: '#fecfef', highlight: { background: '#fecfef', border: '#ff9a9e' } },
                 shape: 'diamond',
-                label: 'Target'
+                label: 'Target',
+                size: 22
             },
             Pathway: {
                 color: { background: '#a18cd1', border: '#fbc2eb', highlight: { background: '#fbc2eb', border: '#a18cd1' } },
                 shape: 'box',
-                label: 'Pathway'
+                label: 'Pathway',
+                size: 20
             },
 
             // Safety & Events -> Mapped to Drug Product Info per user
@@ -971,7 +1079,8 @@
             AdverseEvent: {
                 color: { background: '#C71585', border: '#FF69B4' },
                 shape: 'dot',
-                label: 'Drug Product Info'
+                label: 'Drug Product Info',
+                size: 18
             },
 
             // Study Overview (New)
@@ -979,41 +1088,45 @@
                 color: { background: '#000080', border: '#191970' },
                 shape: 'square',
                 label: 'Study Overview',
-                font: { color: 'white' }
+                font: { color: 'white' },
+                size: 20
             },
             StudyOverview: {
                 color: { background: '#000080', border: '#191970' },
                 shape: 'square',
                 label: 'Study Overview',
-                font: { color: 'white' }
+                font: { color: 'white' },
+                size: 20
             },
 
             // --- DATA TYPES (Distinct Colors per User Request) ---
 
             // Preclinical -> Orange/Triangle
-            PreClinicalData: { color: { background: '#FF8C00', border: '#FFA500' }, shape: 'triangle', label: 'Preclinical' },
-            PreClinical: { color: { background: '#FF8C00', border: '#FFA500' }, shape: 'triangle', label: 'Preclinical' },
+            PreClinicalData: { color: { background: '#FF8C00', border: '#FFA500' }, shape: 'triangle', label: 'Preclinical', size: 20 },
+            PreClinical: { color: { background: '#FF8C00', border: '#FFA500' }, shape: 'triangle', label: 'Preclinical', size: 20 },
 
-            // Clinical -> Teal/Cyan/Box
-            ClinicalData: { color: { background: '#00CED1', border: '#20B2AA' }, shape: 'box', label: 'Clinical' },
-            Clinical: { color: { background: '#00CED1', border: '#20B2AA' }, shape: 'box', label: 'Clinical' },
+            // Clinical -> Teal/Cyan/TriangleDown
+            ClinicalData: { color: { background: '#00CED1', border: '#008B8B' }, shape: 'triangleDown', label: 'Clinical', size: 20 },
+            Clinical: { color: { background: '#00CED1', border: '#008B8B' }, shape: 'triangleDown', label: 'Clinical', size: 20 },
 
             // Signature -> Purple/Dot
-            Signature: { color: { background: '#9370DB', border: '#BA55D3' }, shape: 'dot', label: 'Signature' },
+            Signature: { color: { background: '#9370DB', border: '#BA55D3' }, shape: 'dot', label: 'Signature', size: 12 },
 
-            // Transcriptomic -> Bright Green/Trapezoid-ish (using database icon approx or box)
-            Transcriptomic: { color: { background: '#7FFF00', border: '#32CD32' }, shape: 'database', label: 'Transcriptomic' },
-            TranscriptomicData: { color: { background: '#7FFF00', border: '#32CD32' }, shape: 'database', label: 'Transcriptomic' },
+            // Transcriptomic -> Bright Green/Diamond
+            Transcriptomic: { color: { background: '#7FFF00', border: '#32CD32' }, shape: 'diamond', label: 'Transcriptomic', size: 12 },
+            TranscriptomicData: { color: { background: '#7FFF00', border: '#32CD32' }, shape: 'diamond', label: 'Transcriptomic', size: 12 },
 
             SafetyEfficacy: {
                 color: { background: '#B8860B', border: '#fa709a' },
                 shape: 'box',
-                label: 'Safety (Main)'
+                label: 'Safety (Main)',
+                size: 20
             },
             SafetyData: {
                 color: { background: '#fa709a', border: '#fa709a' },
                 shape: 'dot',
-                label: 'Safety Data'
+                label: 'Safety Data',
+                size: 18
             },
 
             // Biological Context
@@ -1031,16 +1144,62 @@
             SimilarMolecule: {
                 color: { background: '#008080', border: '#005f5f' },
                 shape: 'star',
-                label: 'Similar Molecule'
+                label: 'Similar Molecule',
+                size: 25
             },
             Enzyme: { color: '#fdcbf1', shape: 'ellipse', label: 'Enzyme' },
             Reaction: { color: '#e0c3fc', shape: 'triangle', label: 'Reaction' },
 
             // Evidence
-            Literature: { color: '#d4fc79', shape: 'square', label: 'Literature' },
-            Publication: { color: '#d4fc79', shape: 'square', label: 'Publication' },
-            Observation: { color: '#8ec5fc', shape: 'dot', label: 'Observation' },
-            Mechanism: { color: '#e2d1c3', shape: 'dot', label: 'Mechanism' }
+            Literature: { color: { background: '#d4fc79', border: '#b8d400' }, shape: 'square', label: 'Literature' },
+            Publication: { color: { background: '#d4fc79', border: '#b8d400' }, shape: 'square', label: 'Publication' },
+            Observation: { color: { background: '#8ec5fc', border: '#4facfe' }, shape: 'dot', label: 'Observation' },
+            Mechanism: { color: { background: '#e2d1c3', border: '#c9a882' }, shape: 'dot', label: 'Mechanism' },
+
+            // --- PRECLINICAL SUBNODES ---
+            PreclinicalStudy: { color: { background: '#E8722C', border: '#FF8C00' }, shape: 'triangle', label: 'Preclinical Study' },
+            PreclinicalToxicology: { color: { background: '#D4620C', border: '#E8722C' }, shape: 'triangle', label: 'Preclinical Tox' },
+            ExperimentalDesign: { color: { background: '#FFA040', border: '#E8722C' }, shape: 'triangleDown', label: 'Exp. Design' },
+            ExperimentalGroup: { color: { background: '#FFB570', border: '#FFA040' }, shape: 'dot', label: 'Exp. Group' },
+            Species: { color: { background: '#FFCE8E', border: '#FFB570' }, shape: 'dot', label: 'Species' },
+            MicroscopicFinding: { color: { background: '#E05010', border: '#D4620C' }, shape: 'dot', label: 'Microscopic Finding' },
+            MicroscopicFindings: { color: { background: '#E05010', border: '#D4620C' }, shape: 'dot', label: 'Microscopic Findings' },
+            ToxicityMeasurement: { color: { background: '#C82000', border: '#E05010' }, shape: 'dot', label: 'Toxicity Meas.' },
+            Toxicity: { color: { background: '#C82000', border: '#E05010' }, shape: 'dot', label: 'Toxicity' },
+            ExposureMeasurement: { color: { background: '#FF6B00', border: '#FF8C00' }, shape: 'dot', label: 'Exposure Meas.', size: 18 },
+            Exposure: { color: { background: '#FF8040', border: '#FF6B00' }, shape: 'dot', label: 'Exposure', size: 18 },
+            ToxicokineticMeasurement: { color: { background: '#FFC000', border: '#FFB570' }, shape: 'dot', label: 'TK Measurement', size: 18 },
+            ToxicokineticParameters: { color: { background: '#FFD040', border: '#FFC000' }, shape: 'triangleDown', label: 'TK Parameters', size: 20 },
+            ClinicalChemistryCycle: { color: { background: '#00A6B4', border: '#00CED1' }, shape: 'dot', label: 'Clinical Chem. Cycle', size: 18 },
+            ClinicalChemistry: { color: { background: '#00B8C8', border: '#00A6B4' }, shape: 'dot', label: 'Clinical Chemistry', size: 18 },
+            ReproductiveToxicity: { color: { background: '#8B0000', border: '#C82000' }, shape: 'dot', label: 'Repro. Tox', size: 18 },
+            Carcinogenicity: { color: { background: '#6B0000', border: '#8B0000' }, shape: 'dot', label: 'Carcinogenicity', size: 18 },
+            Genotoxicity: { color: { background: '#4B0000', border: '#6B0000' }, shape: 'dot', label: 'Genotoxicity', size: 18 },
+            MechanismOfAction: { color: { background: '#5B2D8E', border: '#9370DB' }, shape: 'dot', label: 'Mechanism', size: 18 },
+
+            // --- TRANSCRIPTOMIC SUBNODES ---
+            DifferentialExpression: { color: { background: '#32CD32', border: '#7FFF00' }, shape: 'dot', label: 'Diff. Expression', size: 12 },
+
+            // --- CLINICAL SUBNODES ---
+            DosingAdministration: { color: { background: '#008B8B', border: '#00CED1' }, shape: 'dot', label: 'Dosing & Admin', size: 18 },
+            PopulationCharacteristics: { color: { background: '#008B8B', border: '#00CED1' }, shape: 'dot', label: 'Population', size: 18 },
+            StudyMetadata: { color: { background: '#008B8B', border: '#00CED1' }, shape: 'square', label: 'Study Metadata', size: 18 },
+            EligibilityCriteria: { color: { background: '#008B8B', border: '#00CED1' }, shape: 'dot', label: 'Eligibility', size: 18 },
+            TreatmentManagement: { color: { background: '#008B8B', border: '#00CED1' }, shape: 'dot', label: 'Treatment Mgmt', size: 18 },
+            Pharmacokinetics: { color: { background: '#008B8B', border: '#00CED1' }, shape: 'dot', label: 'Pharmacokinetics', size: 20 },
+            RecommendedDose: { color: { background: '#008B8B', border: '#00CED1' }, shape: 'dot', label: 'Recommended Dose', size: 18 },
+
+            // --- DRUG PRODUCT INFO SUBNODES ---
+            DrugProductInfo: { color: { background: '#C71585', border: '#FF69B4' }, shape: 'dot', label: 'Drug Info', size: 18 },
+            SpecialPopulations: { color: { background: '#A71275', border: '#C71585' }, shape: 'dot', label: 'Special Populations', size: 18 },
+            Contraindications: { color: { background: '#8B1070', border: '#A71275' }, shape: 'dot', label: 'Contraindications', size: 18 },
+            DrugInteractions: { color: { background: '#750E60', border: '#8B1070' }, shape: 'dot', label: 'Drug Interactions', size: 18 },
+            FormulationStability: { color: { background: '#C74095', border: '#C71585' }, shape: 'dot', label: 'Formulation', size: 18 },
+
+            // --- EFFICACY SUBNODES ---
+            EfficacyOutcomes: { color: { background: '#006400', border: '#228B22' }, shape: 'dot', label: 'Efficacy Outcomes' },
+            SubgroupEfficacy: { color: { background: '#228B22', border: '#32CD32' }, shape: 'dot', label: 'Subgroup Efficacy' },
+            SafetyEfficacy: { color: { background: '#2E8B57', border: '#3CB371' }, shape: 'dot', label: 'Safety & Efficacy' }
         };
         const defaultColor = '#A5ABB6';
 
@@ -1067,15 +1226,45 @@
 
                 // Transform data for Vis.js
                 const nodes = new vis.DataSet(data.nodes.map(n => {
-                    // Determine label: try name, drug_name, or fallback to type
-                    let label = n.properties.name || n.properties.drug_name || n.label || n.id;
+                    const props = n.properties;
 
-                    // Signature nodes: show "cell_line - concentration" instead
-                    if (n.label === 'Signature' && n.properties.cell_line) {
-                        label = n.properties.cell_line + ' - ' + (n.properties.concentration || '');
+                    // Build a meaningful label per node type
+                    let label = props.name || props.drug_name;
+
+                    if (!label) {
+                        // Signature: show cell_line + concentration
+                        if (n.label === 'Signature' && props.cell_line) {
+                            label = props.cell_line + (props.concentration ? ' ' + props.concentration : '');
+                        }
+                        // DifferentialExpression: show gene symbol
+                        else if (n.label === 'DifferentialExpression') {
+                            label = props.gene_symbol || props.gene_id || 'Diff. Exp.';
+                        }
+                        // MicroscopicFinding/s: show finding
+                        else if (n.label === 'MicroscopicFinding' || n.label === 'MicroscopicFindings') {
+                            label = props.finding || props.type || 'Microscopic Finding';
+                        }
+                        // Species: show species name
+                        else if (n.label === 'Species') {
+                            label = props.species_name || props.common_name || 'Species';
+                        }
+                        // ExperimentalGroup: show dose
+                        else if (n.label === 'ExperimentalGroup') {
+                            label = props.dose ? 'Group: ' + props.dose : 'Exp. Group';
+                        }
+                        // ToxicityMeasurement / ExposureMeasurement / ToxicokineticMeasurement
+                        else if (n.label.endsWith('Measurement')) {
+                            label = props.parameter || props.type || n.label.replace('Measurement', '').trim();
+                        }
+                        // Use the group label as the readable display if set, else node type
+                        else {
+                            const grpLabel = (groups[n.label] || {}).label;
+                            label = grpLabel || n.label;
+                        }
                     }
 
-                    if (label.length > 20) label = label.substring(0, 20) + '...';
+                    if (label && label.length > 22) label = label.substring(0, 22) + '…';
+                    if (!label) label = n.label;
 
                     // Determine group style
                     const grp = groups[n.label] || {};
@@ -1083,13 +1272,15 @@
                     return {
                         id: n.id,
                         label: label,
-                        title: n.label, // Hover tooltip
+                        title: `<b>${n.label}</b>`, // Hover tooltip shows node type
                         group: n.label,
                         color: grp.color || defaultColor,
-                        font: { size: 12, color: '#333' },
+                        shape: grp.shape || 'dot',
+                        size: grp.size || 25,
+                        font: { size: 12, color: '#333', background: '#ffffffdd' },
                         borderWidth: 2,
                         shadow: true,
-                        rawProperties: n.properties // Store raw props for sidebar
+                        rawProperties: props // Store raw props for sidebar
                     };
                 }));
 
@@ -1132,15 +1323,62 @@
                 // Initialize Network
                 network = new vis.Network(container, dataSet, options);
 
+                // --- Focus & Zoom Logic ---
+                function focusOnNode(nodeId) {
+                    const connectedNodes = network.getConnectedNodes(nodeId);
+                    const allNodeIds = nodes.getIds();
+                    const allEdgeIds = edges.getIds();
+
+                    // Faster animation duration: 400ms
+                    const animDuration = 400;
+
+                    // Highlight node and neighbors, dim others
+                    const nodeUpdates = allNodeIds.map(id => {
+                        const isNeighbor = id === nodeId || connectedNodes.includes(id);
+                        return {
+                            id: id,
+                            opacity: isNeighbor ? 1 : 0.1,
+                            font: { color: isNeighbor ? '#333' : '#bbb' }
+                        };
+                    });
+                    nodes.update(nodeUpdates);
+
+                    const edgeUpdates = allEdgeIds.map(id => {
+                        const edge = edges.get(id);
+                        if (!edge) return { id: id, color: { opacity: 0.05 } };
+                        const isConnected = edge.from === nodeId || edge.to === nodeId;
+                        return {
+                            id: id,
+                            color: { opacity: isConnected ? 1 : 0.05 }
+                        };
+                    });
+                    edges.update(edgeUpdates);
+
+                    // Zoom in faster
+                    network.focus(nodeId, {
+                        scale: 1.2,
+                        animation: { duration: animDuration, easingFunction: 'easeOutQuart' }
+                    });
+                }
+
+                function resetFocus() {
+                    const allNodeIds = nodes.getIds();
+                    const allEdgeIds = edges.getIds();
+
+                    nodes.update(allNodeIds.map(id => ({ id: id, opacity: 1, font: { color: '#333' } })));
+                    edges.update(allEdgeIds.map(id => ({ id: id, color: { opacity: 1 } })));
+                }
+
                 // --- Click Interaction ---
                 network.on("click", function (params) {
                     if (params.nodes.length > 0) {
                         const nodeId = params.nodes[0];
-                        // Find node in DataSet
                         const nodeData = nodes.get(nodeId);
-                        showProperties(nodeData);
 
-                        // Track node view for PDF report
+                        showProperties(nodeData);
+                        focusOnNode(nodeId);
+
+                        // Track node view
                         fetch('/track_node', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
@@ -1152,6 +1390,7 @@
                         }).catch(err => console.log('Track error:', err));
                     } else {
                         hideProperties();
+                        resetFocus();
                     }
                 });
 
@@ -1193,7 +1432,7 @@
             const compareBtnContainer = document.getElementById('compare-btn-container');
             if (node.group === 'Drug') {
                 const drugNm = props.drug_name || props.name || node.label;
-                const isAlreadySelected = (compareSlots[0] && compareSlots[0].name === drugNm) || (compareSlots[1] && compareSlots[1].name === drugNm);
+                const isAlreadySelected = compareSlots.some(s => s && s.name === drugNm);
                 compareBtnContainer.innerHTML = `<button class="compare-btn ${isAlreadySelected ? 'selected' : ''}" data-drug-name="${drugNm}" id="compare-add-btn">${isAlreadySelected ? '✅ Added to Compare' : '🔬 Add to Compare'}</button>`;
                 document.getElementById('compare-add-btn').onclick = function () {
                     addToCompare(drugNm, Object.assign({}, props), node.group);
@@ -1233,10 +1472,26 @@
             } else {
                 keys.forEach(key => {
                     const val = props[key];
+
+                    // Native HTML rendering for comprehensive data tables
+                    if (key.endsWith('_html')) {
+                        const niceTitle = key.replace('_html', '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+                        const row = `<tr>
+                            <td colspan="2" style="padding: 15px 10px; border-bottom: 2px solid #eee;">
+                                <div style="font-weight: 700; margin-bottom: 12px; color: #2c3e50; font-size: 0.95rem;">💊 ${niceTitle}</div>
+                                ${val}
+                            </td>
+                        </tr>`;
+                        tbody.innerHTML += row;
+                        return; // Skip standard render
+                    }
+
+                    // Standard text property render
                     // Escape single quotes for the function call
                     const valStr = val ? val.toString().replace(/'/g, "\\'") : "";
+                    const displayKey = key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
                     const row = `<tr>
-                        <td><strong>${key}</strong></td>
+                        <td><strong>${displayKey}</strong></td>
                         <td>
                             <div style="display: flex; align-items: center; justify-content: space-between;">
                                 <span>${val}</span>
@@ -1330,20 +1585,15 @@
         initResizers();
 
         // --- Compare Feature ---
-        let compareSlots = [null, null]; // [{name, props}, {name, props}]
+        let compareSlots = []; // Array of {name, props, group}
 
         function addToCompare(name, props, group) {
-            // Only Drug nodes can be compared
-            if (compareSlots[0] && compareSlots[0].name === name) return;
-            if (compareSlots[1] && compareSlots[1].name === name) return;
-
-            if (!compareSlots[0]) {
-                compareSlots[0] = { name, props, group };
-            } else if (!compareSlots[1]) {
-                compareSlots[1] = { name, props, group };
+            // Check if already in slots
+            if (compareSlots.some(s => s.name === name)) {
+                // Remove if already there (toggle behavior)
+                compareSlots = compareSlots.filter(s => s.name !== name);
             } else {
-                // Replace slot 2
-                compareSlots[1] = { name, props, group };
+                compareSlots.push({ name, props, group });
             }
             updateCompareBar();
             updateCompareButton();
@@ -1351,209 +1601,263 @@
 
         function updateCompareBar() {
             const bar = document.getElementById('compare-bar');
-            const d1 = document.getElementById('bar-drug1');
-            const d2 = document.getElementById('bar-drug2');
+            const drugsContainer = document.querySelector('#compare-bar .bar-drugs');
             const goBtn = document.getElementById('bar-go-btn');
+            if (!bar || !drugsContainer || !goBtn) return;
 
-            if (compareSlots[0] || compareSlots[1]) {
+            if (compareSlots && compareSlots.length > 0) {
                 bar.classList.add('active');
-                d1.textContent = compareSlots[0] ? compareSlots[0].name : '—';
-                d2.textContent = compareSlots[1] ? compareSlots[1].name : '(click another drug)';
-                goBtn.disabled = !(compareSlots[0] && compareSlots[1]);
+                let html = '<span>🔬 Compare:</span>';
+                compareSlots.forEach((slot, idx) => {
+                    if (!slot || !slot.name) return;
+                    html += `<span class="bar-chip">
+                        ${slot.name}
+                        <span class="chip-remove" onclick="removeFromCompare('${slot.name.replace(/'/g, "\\'")}')" title="Remove">✕</span>
+                    </span>`;
+                    if (idx < compareSlots.length - 1) html += '<span>+</span>';
+                });
+                if (compareSlots.length < 2) {
+                    html += '<span style="font-size:0.8rem; opacity:0.8; margin-left:10px;">(select more drugs)</span>';
+                }
+                drugsContainer.innerHTML = html;
+                goBtn.disabled = compareSlots.length < 2;
+                goBtn.textContent = compareSlots.length > 2 ? `Compare ${compareSlots.length} Drugs` : 'Compare Now';
             } else {
                 bar.classList.remove('active');
+                drugsContainer.innerHTML = ''; // Explicitly clear
             }
         }
 
         function updateCompareButton() {
-            const btn = document.querySelector('.compare-btn');
-            if (!btn) return;
-            const currentNode = btn.dataset.drugName;
-            if (compareSlots[0] && compareSlots[0].name === currentNode ||
-                compareSlots[1] && compareSlots[1].name === currentNode) {
-                btn.textContent = '✅ Added to Compare';
-                btn.classList.add('selected');
-            }
+            document.querySelectorAll('.compare-btn').forEach(btn => {
+                const currentNode = btn.dataset.drugName;
+                if (!currentNode) return;
+                const isSelected = compareSlots && compareSlots.some(s => s && s.name === currentNode);
+                if (isSelected) {
+                    btn.textContent = '✅ Added to Compare';
+                    btn.classList.add('selected');
+                } else {
+                    btn.textContent = '🔬 Add to Compare';
+                    btn.classList.remove('selected');
+                }
+            });
+        }
+
+        function removeFromCompare(name) {
+            compareSlots = compareSlots.filter(s => s.name !== name);
+            updateCompareBar();
+            updateCompareButton();
         }
 
         function clearCompare() {
-            compareSlots = [null, null];
+            compareSlots = [];
             updateCompareBar();
-            const btn = document.querySelector('.compare-btn');
-            if (btn) {
-                btn.textContent = '🔬 Add to Compare';
-                btn.classList.remove('selected');
-            }
+            updateCompareButton();
+            // Also close modal if clear was somehow triggered while modal was open
+            closeCompareModal();
         }
 
         async function showComparison() {
-            if (!compareSlots[0] || !compareSlots[1]) return;
+            if (compareSlots.length < 2) return;
             const modal = document.getElementById('compare-modal');
             const body = document.getElementById('compare-body');
 
-            const d1 = compareSlots[0];
-            const d2 = compareSlots[1];
+            const drugNames = compareSlots.map(s => s.name);
+            const drugsParam = drugNames.map(n => encodeURIComponent(n)).join(',');
 
             // Show loading
-            body.innerHTML = '<div style="text-align:center;padding:40px;color:#888;">⏳ Loading comparison data...</div>';
+            body.innerHTML = '<div style="text-align:center;padding:40px;color:#888;">⏳ Loading parallel synthesis for ' + drugNames.join(', ') + '...</div>';
             modal.classList.add('active');
 
-            // Fetch subnode data from backend
-            let compareData = null;
             try {
-                const resp = await fetch(`/get_compare_data?drug1=${encodeURIComponent(d1.name)}&drug2=${encodeURIComponent(d2.name)}`);
-                if (resp.ok) compareData = await resp.json();
-            } catch (e) {
-                console.error('Compare data fetch error:', e);
-            }
+                // Fetch subnode data from backend
+                let compareResults = null;
+                try {
+                    const resp = await fetch(`/get_compare_data?drugs=${drugsParam}`);
+                    if (resp.ok) {
+                        const data = await resp.json();
+                        compareResults = data.compare_results;
+                    }
+                } catch (e) {
+                    console.error('Compare data fetch error:', e);
+                }
 
-            // --- Tab 1: Drug Properties (existing) ---
-            function getImgUrl(p) {
-                if (p.cid) return `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/${p.cid}/PNG?record_type=2d&image_size=250x250`;
-                if (p.smiles) return `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/smiles/${encodeURIComponent(p.smiles)}/PNG?record_type=2d&image_size=250x250`;
-                return '';
-            }
-            const img1 = getImgUrl(d1.props);
-            const img2 = getImgUrl(d2.props);
+                if (!compareResults) {
+                    body.innerHTML = '<div class="no-data-msg">Could not load comparison data.</div>';
+                    return;
+                }
 
-            const propKeys = ['molecular_weight', 'logp', 'tpsa', 'h_donor', 'h_acceptor', 'cid', 'chembl_id', 'smiles', 'iupac_name'];
-            const allKeys = new Set([...Object.keys(d1.props), ...Object.keys(d2.props)]);
-            allKeys.forEach(k => { if (!propKeys.includes(k) && k !== 'drug_name' && k !== 'name') propKeys.push(k); });
+                // --- Tab 1: Drug Properties ---
+                function getImgUrl(p) {
+                    if (p.cid) return `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/cid/${p.cid}/PNG?record_type=2d&image_size=250x250`;
+                    if (p.smiles) return `https://pubchem.ncbi.nlm.nih.gov/rest/pug/compound/smiles/${encodeURIComponent(p.smiles)}/PNG?record_type=2d&image_size=250x250`;
+                    return '';
+                }
 
-            let tableRows = '';
-            propKeys.forEach(key => {
-                const v1 = d1.props[key] != null ? d1.props[key].toString() : '—';
-                const v2 = d2.props[key] != null ? d2.props[key].toString() : '—';
-                const rowClass = v1 === v2 ? 'match' : 'diff';
-                const label = key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-                tableRows += `<tr class="${rowClass}"><td><strong>${label}</strong></td><td>${v1}</td><td>${v2}</td></tr>`;
-            });
+                let structuresHtml = '<div class="compare-structures" style="overflow-x: auto; padding-bottom: 15px; display: flex; gap: 20px;">';
+                drugNames.forEach(name => {
+                    const d = compareResults[name];
+                    if (!d) return; 
+                    const img = getImgUrl(d.drug_props || {});
+                    structuresHtml += `
+                        <div class="compare-struct-card" style="min-width: 220px; flex-shrink: 0;">
+                            ${img ? `<img src="${img}" alt="${name}" onerror="this.style.display='none'">` : '<div style="color:#bbb;padding:40px;">No structure</div>'}
+                            <div class="drug-label">${name}</div>
+                        </div>`;
+                });
+                structuresHtml += '</div>';
 
-            let tab1Html = `
-                <div class="compare-structures">
-                    <div class="compare-struct-card">
-                        ${img1 ? `<img src="${img1}" alt="${d1.name}" onerror="this.style.display='none'">` : '<div style="color:#bbb;padding:40px;">No structure</div>'}
-                        <div class="drug-label">${d1.name}</div>
+                const propKeys = ['molecular_weight', 'logp', 'tpsa', 'h_donor', 'h_acceptor', 'cid', 'chembl_id', 'smiles', 'iupac_name'];
+                const allPossibleKeys = new Set();
+                drugNames.forEach(name => {
+                    if (!compareResults[name]) return;
+                    Object.keys(compareResults[name].drug_props || {}).forEach(k => allPossibleKeys.add(k));
+                });
+                allPossibleKeys.forEach(k => {
+                    if (!propKeys.includes(k) && k !== 'drug_name' && k !== 'name' && !k.endsWith('_html')) propKeys.push(k);
+                });
+
+                let tableHead = '<thead><tr><th>Property</th>';
+                drugNames.forEach(name => { tableHead += `<th>${name}</th>`; });
+                tableHead += '</tr></thead>';
+
+                let tableRows = '';
+                propKeys.forEach(key => {
+                    const values = drugNames.map(name => (compareResults[name] && compareResults[name].drug_props) ? compareResults[name].drug_props[key] : '—');
+                    const allSame = values.every(v => v === values[0]);
+                    const rowClass = allSame ? 'match' : 'diff';
+                    const label = key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+                    tableRows += `<tr class="${rowClass}"><td><strong>${label}</strong></td>`;
+                    values.forEach(v => {
+                        tableRows += `<td>${v != null ? v.toString() : '—'}</td>`;
+                    });
+                    tableRows += '</tr>';
+                });
+
+                let tab1Html = structuresHtml + `
+                    <div style="overflow-x: auto;">
+                        <table class="compare-table">
+                            ${tableHead}
+                            <tbody>${tableRows}</tbody>
+                        </table>
                     </div>
-                    <div class="compare-struct-card">
-                        ${img2 ? `<img src="${img2}" alt="${d2.name}" onerror="this.style.display='none'">` : '<div style="color:#bbb;padding:40px;">No structure</div>'}
-                        <div class="drug-label">${d2.name}</div>
-                    </div>
-                </div>
-                <table class="compare-table">
-                    <thead><tr><th>Property</th><th>${d1.name}</th><th>${d2.name}</th></tr></thead>
-                    <tbody>${tableRows}</tbody>
-                </table>
-                <div style="margin-top:12px;font-size:0.78rem;color:#888;">
-                    &#x1f7e9; <span style="background:#e8f5e9;padding:2px 6px;border-radius:4px;">Matching</span> &nbsp;
-                    &#x1f7e8; <span style="background:#fff8e1;padding:2px 6px;border-radius:4px;">Different</span>
-                </div>`;
+                `;
 
-            // --- Tab 2: Subnodes ---
-            let tab2Html = '';
-            if (compareData) {
-                const sn1 = compareData.drug1.subnodes || {};
-                const sn2 = compareData.drug2.subnodes || {};
-                const allTypes = new Set([...Object.keys(sn1), ...Object.keys(sn2)]);
+                // --- Tab 2: Subnodes ---
+                const allTypesArr = [];
+                drugNames.forEach(name => {
+                    const subnodesObj = (compareResults[name] && compareResults[name].subnodes) ? compareResults[name].subnodes : {};
+                    Object.keys(subnodesObj).forEach(t => {
+                        if (!allTypesArr.includes(t)) allTypesArr.push(t);
+                    });
+                });
 
-                // Friendly type names
                 const typeNames = {
-                    'PreClinicalData': 'Preclinical Data', 'PreClinical': 'Preclinical',
-                    'ClinicalData': 'Clinical Data', 'Clinical': 'Clinical',
-                    'Signature': 'Transcriptomic Signatures', 'Transcriptomic': 'Transcriptomic',
-                    'TranscriptomicData': 'Transcriptomic Data',
-                    'AdverseEvent': 'Drug Product Info', 'AdverseEvents': 'Drug Product Info (Main)',
-                    'SafetyEfficacy': 'Safety & Efficacy', 'SafetyData': 'Safety Data',
-                    'Study': 'Study Overview', 'StudyOverview': 'Study Overview',
+                    'ClinicalData': '📋 Clinical Data',
+                    'PreclinicalData': '🔬 Preclinical Data',
+                    'Transcriptomics': '🧬 Transcriptomics',
+                    'ExperimentalDesign': '📐 Experimental Design',
+                    'Genotoxicity': '☣️ Genotoxicity',
+                    'Exposure': '📉 Exposure & PK',
+                    'MicroscopicFindings': '🔍 Microscopic Findings',
+                    'AdverseEvents': '🚩 Adverse Events / Toxicity',
+                    'Hepatotoxicity Risk': '🩸 Hepatotoxicity Risk',
+                    'Metabolism & CYP Profile': '⚙️ Metabolism & CYP Profile',
+                    'Preclinical Organ Toxicity': '🔬 Preclinical Organ Toxicity',
+                    'Clinical Safety Alerts': '🚨 Clinical Safety Alerts',
+                    'Physicochemical Risk Factors': '⚠️ Physicochemical Risk Factors',
+                    'API Rate Limit': '⏳ AI Rate Limit Active',
+                    'Other': '❓ Other Findings'
                 };
 
-                if (allTypes.size === 0) {
-                    tab2Html = '<div class="no-data-msg">No subnode data available for comparison.</div>';
+                let tab2Html = '';
+                if (allTypesArr.length === 0) {
+                    tab2Html = '<div class="no-data-msg">No subnode data available.</div>';
                 } else {
-                    allTypes.forEach(type => {
-                        const list1 = sn1[type] || [];
-                        const list2 = sn2[type] || [];
+                    allTypesArr.sort().forEach(type => {
                         const friendlyName = typeNames[type] || type;
-
-                        function renderSubnodeList(list, drugName) {
-                            if (list.length === 0) return '<div class="no-data-msg">No data</div>';
-                            let html = '';
-                            list.forEach((props, idx) => {
-                                html += `<div style="margin-bottom:8px;"><strong style="font-size:0.8rem;color:#555;">#${idx + 1}</strong>
-                                <table class="subnode-props-table">`;
-                                Object.keys(props).forEach(k => {
-                                    let val = props[k];
-                                    if (Array.isArray(val)) val = val.join(', ');
-                                    if (val && val.toString().length > 100) val = val.toString().substring(0, 100) + '...';
-                                    html += `<tr><td>${k}</td><td>${val}</td></tr>`;
-                                });
-                                html += '</table></div>';
+                        let propKeys = new Set();
+                        drugNames.forEach(name => {
+                            const subnodesObj = (compareResults[name] && compareResults[name].subnodes) ? compareResults[name].subnodes : {};
+                            const list = subnodesObj[type] || [];
+                            list.forEach(nodeProps => {
+                                Object.keys(nodeProps).forEach(k => propKeys.add(k));
                             });
-                            return html;
-                        }
+                        });
+                        const sortedKeys = Array.from(propKeys).sort().filter(k => k !== 'Data_Source');
+                        let subTableHead = '<thead><tr><th>Property</th>';
+                        drugNames.forEach(name => { subTableHead += `<th>${name}</th>`; });
+                        subTableHead += '</tr></thead>';
+
+                        let subTableRows = '';
+                        sortedKeys.forEach(key => {
+                            let label = key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+                            const drugValues = drugNames.map(name => {
+                                const subnodesObj = (compareResults[name] && compareResults[name].subnodes) ? compareResults[name].subnodes : {};
+                                const list = subnodesObj[type] || [];
+                                return list.map(item => item[key]).filter(v => v !== undefined && v !== null && v !== '' && v !== 'N/A');
+                            });
+                            subTableRows += `<tr><td><strong>${label}</strong></td>`;
+                            drugNames.forEach((name, idx) => {
+                                const vals = drugValues[idx];
+                                if (vals.length === 0) {
+                                    subTableRows += `<td><span style="color:#aaa;">—</span></td>`;
+                                } else {
+                                    const uniqueVals = Array.from(new Set(vals));
+                                    subTableRows += `<td>${uniqueVals.join(' | ')}</td>`;
+                                }
+                            });
+                            subTableRows += '</tr>';
+                        });
 
                         tab2Html += `
-                        <div class="subnode-category">
-                            <div class="subnode-category-header" onclick="this.nextElementSibling.classList.toggle('open')">
-                                <span>&#x25B6; ${friendlyName}</span>
-                                <span>
-                                    <span class="subnode-count-badge">${d1.name}: ${list1.length}</span>
-                                    <span class="subnode-count-badge" style="background:#764ba2;">${d2.name}: ${list2.length}</span>
-                                </span>
-                            </div>
-                            <div class="subnode-category-body">
-                                <div class="subnode-split">
-                                    <div class="subnode-col">
-                                        <h4>${d1.name}</h4>
-                                        ${renderSubnodeList(list1, d1.name)}
-                                    </div>
-                                    <div class="subnode-col">
-                                        <h4>${d2.name}</h4>
-                                        ${renderSubnodeList(list2, d2.name)}
+                            <div class="subnode-category">
+                                <div class="subnode-category-header" onclick="this.nextElementSibling.classList.toggle('open')">
+                                    <span>▶ ${friendlyName}</span>
+                                </div>
+                                <div class="subnode-category-body">
+                                    <div style="overflow-x: auto;">
+                                        <table class="compare-table">
+                                            ${subTableHead}
+                                            <tbody>${subTableRows}</tbody>
+                                        </table>
                                     </div>
                                 </div>
-                            </div>
-                        </div>`;
+                            </div>`;
                     });
                 }
-            } else {
-                tab2Html = '<div class="no-data-msg">Could not load subnode data. Check database connection.</div>';
-            }
 
-            // --- Tab 3: Graph View ---
-            let tab3Html = `
-                <div class="mini-graph-row">
-                    <div class="mini-graph-container" id="mini-graph-container-1">
-                        <div class="mini-graph-title">
-                            <span>${d1.name}</span>
-                            <button class="mini-graph-fullscreen-btn" onclick="toggleMiniGraphFullscreen('mini-graph-container-1')" title="Fullscreen">&#x2197; Fullscreen</button>
-                        </div>
-                        <div id="mini-graph-1" class="mini-graph-canvas"></div>
+                // --- Tab 3: Graph View ---
+                let graphsHtml = '<div class="mini-graph-row" style="display: flex; flex-wrap: wrap; gap: 20px;">';
+                drugNames.forEach((name, idx) => {
+                    graphsHtml += `
+                        <div class="mini-graph-container" id="mini-graph-container-${idx}" style="flex: 1 1 calc(50% - 20px); min-width: 300px;">
+                            <div class="mini-graph-title">${name}</div>
+                            <div id="mini-graph-${idx}" class="mini-graph-canvas" style="height: 300px; width:100%;"></div>
+                        </div>`;
+                });
+                graphsHtml += '</div>';
+
+                body.innerHTML = `
+                    <div class="compare-tabs">
+                        <button class="compare-tab active" onclick="switchCompareTab(event, 'tab-props')">Drug Properties</button>
+                        <button class="compare-tab" onclick="switchCompareTab(event, 'tab-subnodes')">Subnodes</button>
+                        <button class="compare-tab" onclick="switchCompareTab(event, 'tab-graph')">Graph View</button>
                     </div>
-                    <div class="mini-graph-container" id="mini-graph-container-2">
-                        <div class="mini-graph-title">
-                            <span>${d2.name}</span>
-                            <button class="mini-graph-fullscreen-btn" onclick="toggleMiniGraphFullscreen('mini-graph-container-2')" title="Fullscreen">&#x2197; Fullscreen</button>
-                        </div>
-                        <div id="mini-graph-2" class="mini-graph-canvas"></div>
-                    </div>
-                </div>`;
+                    <div id="tab-props" class="compare-tab-content active">${tab1Html}</div>
+                    <div id="tab-subnodes" class="compare-tab-content">${tab2Html}</div>
+                    <div id="tab-graph" class="compare-tab-content">${graphsHtml}</div>
+                `;
 
-            // --- Assemble Tabs ---
-            body.innerHTML = `
-                <div class="compare-tabs">
-                    <button class="compare-tab active" onclick="switchCompareTab(event, 'tab-props')">&#x1F48A; Drug Properties</button>
-                    <button class="compare-tab" onclick="switchCompareTab(event, 'tab-subnodes')">&#x1F9EC; Subnodes</button>
-                    <button class="compare-tab" onclick="switchCompareTab(event, 'tab-graph')">&#x1F4CA; Graph View</button>
-                </div>
-                <div id="tab-props" class="compare-tab-content active">${tab1Html}</div>
-                <div id="tab-subnodes" class="compare-tab-content">${tab2Html}</div>
-                <div id="tab-graph" class="compare-tab-content">${tab3Html}</div>
-            `;
+                setTimeout(() => {
+                    drugNames.forEach((name, idx) => {
+                        if (compareResults[name]) renderMiniGraph(`mini-graph-${idx}`, compareResults[name]);
+                    });
+                }, 100);
 
-            // Render mini-graphs after DOM is ready
-            if (compareData) {
-                setTimeout(() => renderMiniGraphs(compareData), 100);
+            } catch (err) {
+                console.error('Rendering error:', err);
+                body.innerHTML = `<div class="no-data-msg">UI Rendering Error: ${err.message}</div>`;
             }
         }
 
@@ -1562,6 +1866,15 @@
             document.querySelectorAll('.compare-tab-content').forEach(c => c.classList.remove('active'));
             event.currentTarget.classList.add('active');
             document.getElementById(tabId).classList.add('active');
+
+            if (tabId === 'tab-graph') {
+                setTimeout(() => {
+                    miniNetworks.forEach(net => {
+                        net.redraw();
+                        net.fit();
+                    });
+                }, 50);
+            }
         }
 
         function toggleMiniGraphFullscreen(containerId) {
@@ -1581,52 +1894,47 @@
             }
         });
 
-        function renderMiniGraphs(compareData) {
-            function buildMiniNetwork(containerId, drugData) {
-                const container = document.getElementById(containerId);
-                if (!container || !drugData.nodes || drugData.nodes.length === 0) {
-                    if (container) container.innerHTML = '<div class="no-data-msg">No graph data</div>';
-                    return;
-                }
-
-                const visNodes = new vis.DataSet(drugData.nodes.map(n => {
-                    let label = n.properties.name || n.properties.drug_name || n.label || n.id;
-                    if (n.label === 'Signature' && n.properties.cell_line) {
-                        label = n.properties.cell_line + ' - ' + (n.properties.concentration || '');
-                    }
-                    if (label.length > 15) label = label.substring(0, 15) + '...';
-                    const grp = groups[n.label] || {};
-                    return {
-                        id: n.id,
-                        label: label,
-                        group: n.label,
-                        color: grp.color || defaultColor,
-                        font: { size: 10, color: '#333' },
-                        size: 15,
-                        shadow: true
-                    };
-                }));
-
-                const visEdges = new vis.DataSet(drugData.edges.map(e => ({
-                    from: e.from, to: e.to,
-                    arrows: 'to',
-                    color: { color: '#D3D3D3' },
-                    font: { size: 8, color: '#bbb' },
-                    smooth: { type: 'continuous' }
-                })));
-
-                new vis.Network(container, { nodes: visNodes, edges: visEdges }, {
-                    nodes: { shape: 'dot', size: 15, font: { face: 'Segoe UI', size: 10 } },
-                    physics: {
-                        stabilization: true,
-                        barnesHut: { gravitationalConstant: -2000, springLength: 80, damping: 0.1 }
-                    },
-                    interaction: { dragNodes: true, zoomView: true }
-                });
+        function renderMiniGraph(containerId, drugData) {
+            const container = document.getElementById(containerId);
+            if (!container || !drugData.nodes || drugData.nodes.length === 0) {
+                if (container) container.innerHTML = '<div class="no-data-msg">No graph data</div>';
+                return;
             }
 
-            buildMiniNetwork('mini-graph-1', compareData.drug1);
-            buildMiniNetwork('mini-graph-2', compareData.drug2);
+            const visNodes = new vis.DataSet(drugData.nodes.map(n => {
+                let label = n.properties.name || n.properties.drug_name || n.label || n.id;
+                if (n.label === 'Signature' && n.properties.cell_line) {
+                    label = n.properties.cell_line + ' - ' + (n.properties.concentration || '');
+                }
+                if (label.length > 15) label = label.substring(0, 15) + '...';
+                const grp = groups[n.label] || {};
+                return {
+                    id: n.id,
+                    label: label,
+                    group: n.label,
+                    color: grp.color || defaultColor,
+                    font: { size: 10, color: '#333' },
+                    size: 15,
+                    shadow: true
+                };
+            }));
+
+            const visEdges = new vis.DataSet(drugData.edges.map(e => ({
+                from: e.from, to: e.to,
+                arrows: 'to',
+                color: { color: '#D3D3D3' },
+                font: { size: 8, color: '#bbb' },
+                smooth: { type: 'continuous' }
+            })));
+
+            const network = new vis.Network(container, { nodes: visNodes, edges: visEdges }, {
+                nodes: { shape: 'dot', size: 15, font: { face: 'Segoe UI', size: 10 } },
+                physics: {
+                    stabilization: true,
+                    barnesHut: { gravitationalConstant: -2000, springLength: 80, damping: 0.1 }
+                },
+                interaction: { dragNodes: true, zoomView: true }
+            });
         }
 
         function closeCompareModal() {
@@ -1802,6 +2110,560 @@
             if (event.target == modal) {
                 closeSettings();
             }
+            const toxModal = document.getElementById('tox-modal');
+            if (event.target == toxModal) {
+                closeToxPanel();
+            }
+        }
+    </script>
+
+    <!-- ============================================================ -->
+    <!-- TOXICITY PREDICTION MODAL                                     -->
+    <!-- ============================================================ -->
+    <style>
+        #tox-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.6);
+            z-index: 3000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #tox-modal.active {
+            display: flex;
+        }
+
+        #tox-content {
+            background: #fff;
+            width: 92%;
+            max-width: 800px;
+            max-height: 90vh;
+            border-radius: 16px;
+            overflow-y: auto;
+            box-shadow: 0 12px 60px rgba(0, 0, 0, 0.35);
+            animation: toxSlideIn 0.3s ease;
+        }
+
+        @keyframes toxSlideIn {
+            from {
+                transform: translateY(-30px);
+                opacity: 0;
+            }
+
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+
+        #tox-header {
+            padding: 18px 24px;
+            background: linear-gradient(135deg, #e74c3c, #c0392b);
+            color: white;
+            border-radius: 16px 16px 0 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        #tox-header h3 {
+            margin: 0;
+            font-size: 1.15rem;
+        }
+
+        #tox-close {
+            background: none;
+            border: none;
+            color: white;
+            font-size: 1.5rem;
+            cursor: pointer;
+            line-height: 1;
+        }
+
+        #tox-body {
+            padding: 24px;
+        }
+
+        /* Risk Gauge */
+        .tox-gauge-wrap {
+            text-align: center;
+            margin-bottom: 24px;
+        }
+
+        .tox-gauge-label {
+            font-size: 0.85rem;
+            color: #888;
+            margin-bottom: 6px;
+        }
+
+        .tox-gauge-circle {
+            width: 140px;
+            height: 140px;
+            border-radius: 50%;
+            display: inline-flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            font-weight: 900;
+            font-size: 2rem;
+            color: white;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+            transition: all 0.5s;
+            margin-bottom: 10px;
+        }
+
+        .tox-gauge-sublabel {
+            font-size: 0.8rem;
+            font-weight: 600;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
+        .tox-risk-badge {
+            display: inline-block;
+            padding: 6px 18px;
+            border-radius: 20px;
+            font-weight: 700;
+            font-size: 1rem;
+            color: white;
+            letter-spacing: 1px;
+        }
+
+        /* Score Bar */
+        .tox-score-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+
+        .tox-score-label {
+            width: 160px;
+            font-size: 0.82rem;
+            color: #555;
+            flex-shrink: 0;
+        }
+
+        .tox-bar-bg {
+            flex: 1;
+            background: #f0f0f0;
+            border-radius: 6px;
+            height: 12px;
+            overflow: hidden;
+        }
+
+        .tox-bar-fill {
+            height: 100%;
+            border-radius: 6px;
+            transition: width 1s ease;
+        }
+
+        .tox-score-val {
+            width: 40px;
+            text-align: right;
+            font-size: 0.82rem;
+            font-weight: 700;
+        }
+
+        /* Flags */
+        .tox-section-title {
+            font-weight: 700;
+            font-size: 0.95rem;
+            color: #333;
+            border-bottom: 2px solid #f0f0f0;
+            padding-bottom: 6px;
+            margin: 20px 0 12px;
+        }
+
+        .tox-flag {
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+            margin-bottom: 8px;
+            font-size: 0.88rem;
+            color: #444;
+        }
+
+        .tox-flag-icon {
+            flex-shrink: 0;
+            font-size: 1rem;
+            margin-top: 1px;
+        }
+
+        .tox-no-flags {
+            color: #aaa;
+            font-style: italic;
+            font-size: 0.88rem;
+        }
+
+        /* Molecular Props */
+        .tox-mol-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85rem;
+            margin-bottom: 16px;
+        }
+
+        .tox-mol-table td {
+            padding: 7px 10px;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        .tox-mol-table td:first-child {
+            color: #777;
+            font-weight: 600;
+            width: 40%;
+        }
+
+        /* LLM Output */
+        .tox-llm-box {
+            background: #f8f9ff;
+            border: 1px solid #e0e4ff;
+            border-radius: 10px;
+            padding: 16px;
+            font-size: 0.88rem;
+            line-height: 1.7;
+            color: #333;
+            white-space: pre-wrap;
+        }
+
+        .tox-llm-box ul {
+            margin: 4px 0 4px 16px;
+            padding: 0;
+        }
+
+        .tox-spinner {
+            text-align: center;
+            color: #aaa;
+            padding: 30px;
+            font-size: 0.95rem;
+        }
+    </style>
+
+    <div id="tox-modal">
+        <div id="tox-content">
+            <div id="tox-header">
+                <h3>🧪 Toxicity Risk Prediction — <span id="tox-drug-name"></span></h3>
+                <button id="tox-close" onclick="closeToxPanel()">×</button>
+            </div>
+            <div id="tox-body">
+                <div id="tox-loading" class="tox-spinner">⏳ Analyzing drug safety data...</div>
+                <div id="tox-results" style="display:none;">
+                    <!-- GAUGE -->
+                    <div class="tox-gauge-wrap">
+                        <div class="tox-gauge-label">Overall Toxicity Risk Score</div>
+                        <div class="tox-gauge-circle" id="tox-gauge">
+                            <span id="tox-score-num">--</span>
+                            <span class="tox-gauge-sublabel">/100</span>
+                        </div>
+                        <br>
+                        <span class="tox-risk-badge" id="tox-risk-badge">--</span>
+                    </div>
+
+                    <!-- SCORE BREAKDOWN -->
+                    <div class="tox-section-title">📊 Azure AI Toxicity Risk Breakdown</div>
+                    <div class="tox-score-row">
+                        <span class="tox-score-label" title="Risk of Mitochondrial Toxicity (AI derived)">Mitochondrial Dysfunction</span>
+                        <div class="tox-bar-bg">
+                            <div class="tox-bar-fill" id="bar-mito" style="width:0%; background:#e74c3c;"></div>
+                        </div>
+                        <span class="tox-score-val" id="val-mito">-</span>
+                    </div>
+                    <div class="tox-score-row">
+                        <span class="tox-score-label" title="Risk of DNA Damage / Mutagenicity (AI derived)">DNA Damage Potential</span>
+                        <div class="tox-bar-bg">
+                            <div class="tox-bar-fill" id="bar-dna" style="width:0%; background:#e67e22;"></div>
+                        </div>
+                        <span class="tox-score-val" id="val-dna">-</span>
+                    </div>
+                    <div class="tox-score-row">
+                        <span class="tox-score-label" title="Risk of Covalent Binding (AI derived)">Covalent Binding Risk</span>
+                        <div class="tox-bar-bg">
+                            <div class="tox-bar-fill" id="bar-cov" style="width:0%; background:#e74c3c;"></div>
+                        </div>
+                        <span class="tox-score-val" id="val-cov">-</span>
+                    </div>
+                    <div class="tox-score-row">
+                        <span class="tox-score-label" title="Risk of Oxidative Stress (AI derived)">Oxidative Stress Induction</span>
+                        <div class="tox-bar-bg">
+                            <div class="tox-bar-fill" id="bar-oxi" style="width:0%; background:#9b59b6;"></div>
+                        </div>
+                        <span class="tox-score-val" id="val-oxi">-</span>
+                    </div>
+                    <div class="tox-score-row" style="margin-top:8px; border-top: 2px solid #eee; padding-top:8px;">
+                        <span class="tox-score-label"><strong>DILI Risk (DeepChem)</strong></span>
+                        <div class="tox-bar-bg">
+                            <div class="tox-bar-fill" id="bar-dili" style="width:0%; background:#2c3e50;"></div>
+                        </div>
+                        <span class="tox-score-val" id="val-dili">-</span>
+                    </div>
+
+                    <!-- CLINICAL/PRECLINICAL FLAGS -->
+                    <div class="tox-section-title">🚩 Clinical & Preclinical Safety Flags</div>
+                    <div id="tox-flags-list"></div>
+
+                    <!-- MOLECULAR FLAGS -->
+                    <div class="tox-section-title">⚗️ RDKit Structural Alerts</div>
+                    <div id="tox-mol-flags-list"></div>
+                    <div class="tox-section-title">🔬 Physicochemical Properties</div>
+                    <table class="tox-mol-table" id="tox-mol-props-table">
+                        <tbody></tbody>
+                    </table>
+
+                    <!-- LLM REASONING -->
+                    <div class="tox-section-title">🤖 AI Toxicologist Assessment (Azure GPT-4o)</div>
+                    <div class="tox-llm-box" id="tox-llm-text">Generating AI summary...</div>
+                    
+                    <div class="tox-section-title">🧬 DILI Target Analysis</div>
+                    <div class="tox-llm-box" id="tox-dili-text">Analyzing specific hepatocyte mechanisms...</div>
+
+                    <div class="tox-section-title">📉 Safety Data Analytics (ALT & Exposure)</div>
+                    <div id="tox-charts-container" style="margin-top: 10px; background: white; padding: 10px; border-radius: 8px; border: 1px solid #eee;">
+                        <div style="font-size: 0.75rem; color: #666; margin-bottom: 5px; font-weight: 600;">Liver Safety: ALT Deviation (U/L)</div>
+                        <canvas id="altChart" style="max-height: 180px; width: 100%;"></canvas>
+                        <div style="height: 20px;"></div>
+                        <div style="font-size: 0.75rem; color: #666; margin-bottom: 5px; font-weight: 600;">Exposure Profile: Cmax Deviation (ug/mL)</div>
+                        <canvas id="pkChart" style="max-height: 180px; width: 100%;"></canvas>
+                    </div>
+
+                    <!-- EVIDENCE & PROOFS -->
+                    <div class="tox-section-title">🔍 Knowledge Graph Evidence (Neo4j)</div>
+                    <div id="tox-evidence-container"
+                        style="font-size: 0.82rem; line-height: 1.5; color: #444; background: #fafafa; border: 1px solid #eee; border-radius: 8px; padding: 12px; margin-top: 10px;">
+                        Loading proofs...
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const TOX_DRUG = "{{ drug }}";
+
+        function openToxPanel() {
+            document.getElementById('tox-modal').classList.add('active');
+            document.getElementById('tox-loading').style.display = 'block';
+            document.getElementById('tox-results').style.display = 'none';
+            document.getElementById('tox-drug-name').textContent = TOX_DRUG;
+            runToxPrediction(TOX_DRUG);
+        }
+
+        let altChartInst = null;
+        let pkChartInst = null;
+
+        function renderAnalyticsCharts(analytics) {
+            if (!analytics) return;
+            const altData = analytics.alt_data || [];
+            const pkData = analytics.pk_data || [];
+            const baselineAlt = analytics.baseline_alt || 50;
+
+            const container = document.getElementById('tox-charts-container');
+
+            // Destroy existing instances
+            if (altChartInst) altChartInst.destroy();
+            if (pkChartInst) pkChartInst.destroy();
+
+            if (altData.length === 0 && pkData.length === 0) {
+                container.style.display = 'none';
+                return;
+            }
+
+            container.style.display = 'block';
+            container.innerHTML = `
+                <div style="font-size: 0.75rem; color: #666; margin-bottom: 5px; font-weight: 600;">Liver Safety: ALT Deviation (U/L)</div>
+                <canvas id="altChart" style="max-height: 180px; width: 100%;"></canvas>
+                <div style="height: 20px;"></div>
+                <div style="font-size: 0.75rem; color: #666; margin-bottom: 5px; font-weight: 600;">Exposure Profile: Cmax Deviation (ug/mL)</div>
+                <canvas id="pkChart" style="max-height: 180px; width: 100%;"></canvas>
+            `;
+
+            // ALT Chart
+            const altCtx = document.getElementById('altChart').getContext('2d');
+            altChartInst = new Chart(altCtx, {
+                type: 'bar',
+                data: {
+                    labels: altData.map(d => d.label),
+                    datasets: [
+                        {
+                            label: 'ALT (U/L)',
+                            data: altData.map(d => d.value),
+                            backgroundColor: altData.map(d => d.value > baselineAlt * 3 ? '#e74c3c' : '#f39c12'),
+                            borderRadius: 4
+                        },
+                        {
+                            label: 'Baseline',
+                            data: new Array(altData.length).fill(baselineAlt),
+                            type: 'line',
+                            borderColor: '#27ae60',
+                            borderDash: [5, 5],
+                            fill: false,
+                            pointRadius: 0
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: { 
+                        y: { beginAtZero: true, grid: { color: '#f0f0f0' } },
+                        x: { grid: { display: false } }
+                    },
+                    plugins: { legend: { display: false } }
+                }
+            });
+
+            // PK Chart
+            const pkCtx = document.getElementById('pkChart').getContext('2d');
+            pkChartInst = new Chart(pkCtx, {
+                type: 'line',
+                data: {
+                    labels: pkData.map(d => d.label),
+                    datasets: [{
+                        label: 'Cmax (ug/mL)',
+                        data: pkData.map(d => d.value),
+                        borderColor: '#3498db',
+                        backgroundColor: 'rgba(52, 152, 219, 0.1)',
+                        fill: true,
+                        tension: 0.3
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: { 
+                        y: { beginAtZero: true, grid: { color: '#f0f0f0' } },
+                        x: { grid: { display: false } }
+                    },
+                    plugins: { legend: { display: false } }
+                }
+            });
+        }
+
+        function closeToxPanel() {
+            document.getElementById('tox-modal').classList.remove('active');
+        }
+
+        function runToxPrediction(drug) {
+            fetch('/predict-toxicity', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ drug: drug })
+            })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.error) {
+                        document.getElementById('tox-loading').textContent = '❌ Error: ' + data.error;
+                        return;
+                    }
+                    renderToxResults(data);
+                })
+                .catch(err => {
+                    document.getElementById('tox-loading').textContent = '❌ Failed: ' + err.message;
+                });
+        }
+
+        function renderToxResults(data) {
+            document.getElementById('tox-loading').style.display = 'none';
+            document.getElementById('tox-results').style.display = 'block';
+
+            // Gauge
+            const gauge = document.getElementById('tox-gauge');
+            gauge.style.background = data.risk_color;
+            gauge.style.boxShadow = `0 4px 24px ${data.risk_color}88`;
+            const score = Math.round(data.combined_score);
+            document.getElementById('tox-score-num').textContent = (typeof score === 'number' && !isNaN(score)) ? score : "--";
+            
+            const badge = document.getElementById('tox-risk-badge');
+            badge.textContent = `${data.risk_icon} ${data.risk_level} RISK`;
+            badge.style.background = data.risk_color;
+
+            // Azure AI Metrics (Sub-scores)
+            const aiData = data.ai_analysis || {};
+            const subMetrics = aiData.sub_metrics || {};
+            const mito = parseFloat(subMetrics.mitochondrial_dysfunction) || 0;
+            const dna = parseFloat(subMetrics.dna_damage_potential) || 0;
+            const cov = parseFloat(subMetrics.covalent_binding_risk) || 0;
+            const oxi = parseFloat(subMetrics.oxidative_stress_induction) || 0;
+            const dili = data.dili_score || 0;
+
+            function updateBar(id, val) {
+                document.getElementById(`bar-${id}`).style.width = val + '%';
+                document.getElementById(`val-${id}`).textContent = Math.round(val) + '%';
+            }
+
+            setTimeout(() => {
+                updateBar('mito', mito);
+                updateBar('dna', dna);
+                updateBar('cov', cov);
+                updateBar('oxi', oxi);
+                updateBar('dili', dili);
+            }, 100);
+
+            // Lists
+            const kgEvidence = data.kg_evidence || {};
+            const clinicalFlags = kgEvidence.flags || [];
+            document.getElementById('tox-flags-list').innerHTML = clinicalFlags.length > 0
+                ? clinicalFlags.map(f => `<div class="tox-flag"><span class="tox-flag-icon">🚩</span><span>${f}</span></div>`).join('')
+                : '<div class="tox-no-flags">No significant clinical/preclinical flags.</div>';
+
+            // --- Safety Data Analytics Charts ---
+            renderAnalyticsCharts(data.analytics);
+
+            const molFlags = data.structural_alerts || [];
+            document.getElementById('tox-mol-flags-list').innerHTML = molFlags.length > 0
+                ? molFlags.map(f => `<div class="tox-flag"><span class="tox-flag-icon">⚗️</span><span>${f}</span></div>`).join('')
+                : '<div class="tox-no-flags">No concerning structural alerts.</div>';
+
+            // Props
+            const propsObj = data.properties || {};
+            let propsHtml = '';
+            for (let [k, v] of Object.entries(propsObj)) {
+                propsHtml += `<tr><td>${k}</td><td>${v}</td></tr>`;
+            }
+            document.getElementById('tox-mol-props-table').querySelector('tbody').innerHTML = propsHtml;
+
+            // AI Reasoning
+            let mechHtml = '';
+            if (aiData.biochemical_mechanisms && aiData.biochemical_mechanisms.length > 0) {
+                mechHtml = '<ul>' + aiData.biochemical_mechanisms.map(m => `<li>${m}</li>`).join('') + '</ul>';
+            }
+            const aiSummary = `
+                <strong>Chemical Motif Justification:</strong><br>${aiData.structural_justification || "N/A"}<br><br>
+                <strong>Biochemical Pathways:</strong>${mechHtml}<br>
+                <strong>Final Safety Conclusion:</strong><br>${aiData.safety_conclusion || "N/A"}
+            `;
+            document.getElementById('tox-llm-text').innerHTML = aiSummary;
+            document.getElementById('tox-dili-text').innerHTML = aiData.dili_specific_analysis || "N/A";
+
+            // Evidence
+            const ev = kgEvidence.evidence || {};
+            const evBox = document.getElementById('tox-evidence-container');
+            if (Object.keys(ev).length === 0) {
+                evBox.innerHTML = '<div style="color:#aaa; font-style:italic;">No detailed evidence records extracted.</div>';
+            } else {
+                let evHtml = '<table style="width:100%; border-collapse:collapse;">';
+                for (const [key, val] of Object.entries(ev)) {
+                    const label = key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+                    evHtml += `
+                        <tr style="border-bottom:1px solid #efefef;">
+                            <td style="padding:6px 0; font-weight:600; width:40%; color:#666;">${label}</td>
+                            <td style="padding:6px 0; color:#333;">${val}</td>
+                        </tr>`;
+                }
+                evHtml += '</table>';
+                evBox.innerHTML = evHtml;
+            }
+        }
+
+        function setBar(barId, valId, value, max) {
+            const pct = Math.min((value / max) * 100, 100);
+            document.getElementById(barId).style.width = pct + '%';
+            document.getElementById(valId).textContent = value;
         }
     </script>
 </body>
