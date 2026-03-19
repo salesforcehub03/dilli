@@ -6,3 +6,4 @@ python-dotenv
 rdkit
 openai
 numpy
+reportlab
